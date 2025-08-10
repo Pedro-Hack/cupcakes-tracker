@@ -1,95 +1,82 @@
 import streamlit as st
 import pandas as pd
-import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
 
-st.set_page_config(page_title="Producción Cupcakes", page_icon="🧁", layout="wide")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Producción Cupcakes", layout="wide")
 
-# ==============================
-# AUTENTICACIÓN GOOGLE SHEETS
-# ==============================
-google_creds_json = st.secrets["google_credentials"]
-google_creds_dict = json.loads(google_creds_json)
-
+# --- CONEXIÓN GOOGLE SHEETS ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+# Obtenemos las credenciales directamente del secrets
+google_creds_dict = st.secrets["google_credentials"]
+
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds_dict, scope)
 client = gspread.authorize(creds)
 
-# Abrir hoja de cálculo
-SPREADSHEET_NAME = "Cupcakes Produccion"
-WORKSHEET_NAME = "Produccion"
-sheet = client.open(lista_cupcakes).worksheet(WORKSHEET_NAME)
+# Nombre de la hoja de Google Sheets
+SHEET_NAME = "Produccion"
+sheet = client.open(SHEET_NAME).sheet1
 
-# ==============================
-# FUNCIONES
-# ==============================
-def cargar_datos():
+# --- FUNCIONES ---
+def load_data():
     data = sheet.get_all_records()
     return pd.DataFrame(data)
 
-def guardar_fila(fila):
-    sheet.append_row(fila)
-
-def actualizar_estado(sabor, fecha_inicio, fecha_fin, nuevo_estado):
-    df = cargar_datos()
-    df['Fecha'] = pd.to_datetime(df['Fecha'], format="%Y-%m-%d")
-    mask = (df['Sabor'] == sabor) & (df['Fecha'] >= fecha_inicio) & (df['Fecha'] <= fecha_fin)
-    indices = df[mask].index
-
-    if len(indices) == 0:
-        st.warning("No se encontraron registros para actualizar.")
+def update_production(sabor, estado_origen, estado_destino, cantidad):
+    df = load_data()
+    indices = df[(df["Sabor"] == sabor) & (df["Estado (✅)"] == estado_origen)].index
+    if len(indices) < cantidad:
+        st.error("No hay suficientes registros para mover.")
         return
 
-    for idx in indices:
-        cell = sheet.find(str(df.at[idx, 'ID']))
-        sheet.update_cell(cell.row, df.columns.get_loc("Estado") + 1, nuevo_estado)
+    for i in indices[:cantidad]:
+        sheet.update_cell(i + 2, df.columns.get_loc("Estado (✅)") + 1, estado_destino)
+    st.success(f"Se movieron {cantidad} '{sabor}' de '{estado_origen}' a '{estado_destino}'.")
 
-    st.success(f"Se actualizaron {len(indices)} registros a '{nuevo_estado}'.")
+# --- UI ---
+st.title("📦 Seguimiento de Producción de Cupcakes")
 
-# ==============================
-# INTERFAZ
-# ==============================
-st.title("🧁 Seguimiento Producción de Cupcakes")
+df = load_data()
 
-# Cargar datos
-df = cargar_datos()
-
-# Contadores
+# --- CONTADORES ---
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("En Producción", len(df[df["Estado"] == "Producción"]))
+    st.metric("En Producción", df[df["Estado (✅)"] == "Producción"].shape[0])
 with col2:
-    st.metric("Listos", len(df[df["Estado"] == "Listo"]))
+    st.metric("En Decorado", df[df["Estado (✅)"] == "Decorado"].shape[0])
 with col3:
-    st.metric("Entregados", len(df[df["Estado"] == "Entregado"]))
+    st.metric("Listos", df[df["Estado (✅)"] == "Listo"].shape[0])
 
-st.markdown("---")
+st.divider()
 
-# ==============================
-# SECCIÓN: ACTUALIZAR PRODUCCIÓN
-# ==============================
-st.header("📦 Actualizar Producción")
+# --- SECCIÓN ACTUALIZAR PRODUCCIÓN ---
+st.subheader("🔄 Actualizar Producción")
 
-sabores = df["Sabor"].unique()
-sabor_sel = st.selectbox("Selecciona el sabor", sabores)
+col_a, col_b, col_c, col_d = st.columns(4)
 
-fecha_inicio = st.date_input("Desde", datetime.now())
-fecha_fin = st.date_input("Hasta", datetime.now())
+sabores = sorted(df["Sabor"].unique())
+estados = df["Estado (✅)"].unique()
 
-nuevo_estado = st.selectbox("Nuevo estado", ["Producción", "Listo", "Entregado"])
+with col_a:
+    sabor_sel = st.selectbox("Sabor", sabores)
+with col_b:
+    estado_origen = st.selectbox("Desde", estados)
+with col_c:
+    estado_destino = st.selectbox("Hasta", estados)
+with col_d:
+    cantidad = st.number_input("Cantidad a mover", min_value=1, step=1)
 
-if st.button("Actualizar"):
-    actualizar_estado(sabor_sel, pd.to_datetime(fecha_inicio), pd.to_datetime(fecha_fin), nuevo_estado)
+if st.button("Mover producción"):
+    update_production(sabor_sel, estado_origen, estado_destino, cantidad)
 
-st.markdown("---")
+st.divider()
 
-# ==============================
-# TABLA DE REGISTROS
-# ==============================
-st.subheader("📋 Registros de Producción")
+# --- VISTA TABLA ---
+st.subheader("📋 Datos de Producción")
 st.dataframe(df, use_container_width=True)
+
 
 
 
