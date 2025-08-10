@@ -1,24 +1,19 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import plotly.express as px
+from datetime import datetime
 
-# ========================
-# CARGAR CREDENCIALES DESDE SECRETS
-# ========================
+# ===== CONFIGURACIÓN GOOGLE SHEETS =====
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-# Cargar desde secrets
-creds_dict = st.secrets["gcp_service_account"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
 
+# Nombre de tu hoja de cálculo
 sheet = client.open("lista_cupcakes").sheet1
 
-# ========================
-# FUNCIONES AUXILIARES
-# ========================
+# ===== FUNCIONES =====
 def load_data():
     data = sheet.get_all_records()
     return pd.DataFrame(data)
@@ -26,71 +21,94 @@ def load_data():
 def save_row(row_data):
     sheet.append_row(row_data)
 
-def update_state_by_range(sabor, desde, hasta, nuevo_estado):
-    df = load_data()
-    for index, row in df.iterrows():
-        if row["Sabor"] == sabor and desde <= row["N°"] <= hasta:
-            cell = sheet.find(str(row["N°"]))
-            sheet.update_cell(cell.row, 3, nuevo_estado)  # Columna 3 = Estado (✅)
+def update_rows(sabor, nuevo_estado, desde_id, hasta_id):
+    records = sheet.get_all_records()
+    for idx, row in enumerate(records, start=2):  # empieza en 2 porque la fila 1 es encabezado
+        if row["Sabor"] == sabor and desde_id <= row["N°"] <= hasta_id:
+            sheet.update_cell(idx, 3, nuevo_estado)  # col 3 = Estado (✅)
 
-# ========================
-# APP STREAMLIT
-# ========================
-st.set_page_config(page_title="Control Producción Cupcakes", layout="wide")
-st.title("📦 Control Producción Cupcakes")
+# ===== INTERFAZ =====
+st.sidebar.title("Menú")
+menu = st.sidebar.radio("Selecciona una opción", ["📊 Dashboard", "➕ Agregar Producción", "✏️ Actualizar Producción"])
 
-menu = st.sidebar.radio("Menú", ["📊 Dashboard", "➕ Agregar Producción", "✏️ Actualizar Producción"])
+df = load_data()
 
-# ========================
-# DASHBOARD
-# ========================
+# ===== DASHBOARD =====
 if menu == "📊 Dashboard":
-    df = load_data()
+    st.title("📦 Control Producción Cupcakes")
 
-    col1, col2 = st.columns(2)
+    # ---- MÉTRICAS RÁPIDAS ----
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total producidos", len(df))
+    col2.metric("✅ OK", df[df["Estado (✅)"] == "OK"].shape[0])
+    col3.metric("🔥 En el horno", df[df["Estado (✅)"] == "EN EL HORNO"].shape[0])
+    col4.metric("❌ Defectuosos", df[df["Estado (✅)"] == "DEFECTUOSO"].shape[0])
 
-    with col1:
-        st.subheader("Producción por Sabor")
-        fig_sabor = px.histogram(df, x="Sabor", color="Sabor", text_auto=True)
-        st.plotly_chart(fig_sabor, use_container_width=True)
+    st.markdown("---")
 
-    with col2:
-        st.subheader("Producción por Estado")
-        fig_estado = px.histogram(df, x="Estado (✅)", color="Estado (✅)", text_auto=True)
-        st.plotly_chart(fig_estado, use_container_width=True)
+    # ---- PRODUCCIÓN POR SABOR ----
+    df_sabor = df.groupby("Sabor").size().reset_index(name="Cantidad").sort_values(by="Sabor")
+    fig_sabor = px.bar(
+        df_sabor, x="Sabor", y="Cantidad", color="Sabor", text="Cantidad",
+        color_discrete_sequence=px.colors.qualitative.Set2
+    )
+    fig_sabor.update_traces(textposition="outside")
+    fig_sabor.update_layout(title="Producción por Sabor", yaxis_title="Cantidad", xaxis_title="Sabor", showlegend=False)
 
-    st.subheader("Datos completos")
-    st.dataframe(df)
+    # ---- PRODUCCIÓN POR ESTADO ----
+    estado_order = ["OK", "EN EL HORNO", "DEFECTUOSO"]
+    colores_estado = {"OK": "#28a745", "EN EL HORNO": "#fd7e14", "DEFECTUOSO": "#dc3545"}
 
-# ========================
-# AGREGAR PRODUCCIÓN
-# ========================
+    df_estado = df.groupby("Estado (✅)").size().reset_index(name="Cantidad")
+    df_estado["Estado (✅)"] = pd.Categorical(df_estado["Estado (✅)"], categories=estado_order, ordered=True)
+    df_estado = df_estado.sort_values("Estado (✅)")
+
+    fig_estado = px.bar(
+        df_estado, x="Estado (✅)", y="Cantidad", color="Estado (✅)", text="Cantidad",
+        color_discrete_map=colores_estado
+    )
+    fig_estado.update_traces(textposition="outside")
+    fig_estado.update_layout(title="Producción por Estado", yaxis_title="Cantidad", xaxis_title="Estado", showlegend=True)
+
+    # ---- PIE CHART ----
+    fig_pie = px.pie(
+        df_estado, names="Estado (✅)", values="Cantidad", color="Estado (✅)",
+        color_discrete_map=colores_estado, hole=0.4
+    )
+    fig_pie.update_traces(textinfo="label+percent", pull=[0.05, 0.05, 0.1])
+    fig_pie.update_layout(title="Distribución por Estado")
+
+    col_a, col_b = st.columns(2)
+    col_a.plotly_chart(fig_sabor, use_container_width=True)
+    col_b.plotly_chart(fig_estado, use_container_width=True)
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+# ===== AGREGAR PRODUCCIÓN =====
 elif menu == "➕ Agregar Producción":
-    df = load_data()
-    next_id = df["N°"].max() + 1 if not df.empty else 1
+    st.subheader("➕ Agregar nueva producción")
+    sabor = st.selectbox("Sabor", ["Chocolate", "Limón con amapola", "Vainilla"])
+    cantidad = st.number_input("Cantidad a agregar", min_value=1, step=1)
+    estado_inicial = st.selectbox("Estado inicial", ["OK", "EN EL HORNO", "DEFECTUOSO"])
 
-    sabor = st.selectbox("Sabor", ["Vainilla", "Chocolate", "Fresa", "Red Velvet"])
-    cantidad = st.number_input("Cantidad", min_value=1, step=1)
-    estado_inicial = st.selectbox("Estado inicial", ["PENDIENTE", "EN PROCESO", "TERMINADO"])
-
-    if st.button("Agregar Producción"):
+    if st.button("Guardar producción"):
+        next_id = df["N°"].max() + 1 if not df.empty else 1
+        fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for i in range(cantidad):
-            save_row([next_id + i, sabor, estado_inicial])
-        st.success(f"{cantidad} registros agregados correctamente.")
+            save_row([next_id + i, sabor, estado_inicial, fecha])
+        st.success(f"✅ Se agregaron {cantidad} cupcakes de {sabor} con estado {estado_inicial}")
 
-# ========================
-# ACTUALIZAR PRODUCCIÓN
-# ========================
+# ===== ACTUALIZAR PRODUCCIÓN =====
 elif menu == "✏️ Actualizar Producción":
-    df = load_data()
-    sabor_sel = st.selectbox("Seleccionar Sabor", df["Sabor"].unique())
-    desde = st.number_input("Desde N°", min_value=int(df["N°"].min()), step=1)
-    hasta = st.number_input("Hasta N°", min_value=int(df["N°"].min()), step=1)
-    nuevo_estado = st.selectbox("Nuevo Estado", ["PENDIENTE", "EN PROCESO", "TERMINADO"])
+    st.subheader("✏️ Actualizar producción existente")
+    sabor = st.selectbox("Selecciona el sabor", df["Sabor"].unique())
+    nuevo_estado = st.selectbox("Nuevo estado", ["OK", "EN EL HORNO", "DEFECTUOSO"])
+    desde_id = st.number_input("Desde N°", min_value=int(df["N°"].min()), max_value=int(df["N°"].max()))
+    hasta_id = st.number_input("Hasta N°", min_value=int(df["N°"].min()), max_value=int(df["N°"].max()))
 
-    if st.button("Actualizar Estado"):
-        update_state_by_range(sabor_sel, desde, hasta, nuevo_estado)
-        st.success(f"Estados actualizados para {sabor_sel} del N° {desde} al {hasta}")
+    if st.button("Actualizar estado"):
+        update_rows(sabor, nuevo_estado, desde_id, hasta_id)
+        st.success(f"✅ Estado actualizado a {nuevo_estado} para {sabor} del N° {desde_id} al N° {hasta_id}")
+
 
 
 
