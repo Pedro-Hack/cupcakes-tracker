@@ -17,7 +17,7 @@ client = gspread.authorize(creds)
 
 # Nombre de la hoja de Google Sheets
 SHEET_NAME = "lista_cupcakes"
-sheet = client.open(lista_cupcakes).sheet1
+sheet = client.open(SHEET_NAME).sheet1
 
 # --- FUNCIONES ---
 def load_data():
@@ -76,6 +76,7 @@ st.divider()
 # --- VISTA TABLA ---
 st.subheader("📋 Datos de Producción")
 st.dataframe(df, use_container_width=True)
+
 
 
 
