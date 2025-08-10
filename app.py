@@ -1,108 +1,62 @@
 import streamlit as st
-import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import os
+import json
+import pandas as pd
 import plotly.express as px
-from streamlit_autorefresh import st_autorefresh
 
-# ========================
-# 1. Configuración
-# ========================
-st.set_page_config(page_title="Seguimiento de Cupcakes", layout="wide")
-st_autorefresh(interval=10_000, key="data_refresh")
-
-# ========================
-# 2. Conexión a Google Sheets
-# ========================
+# Alcance de Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+
+# Detectar si estamos en local o en Streamlit Cloud
+if os.path.exists("credentials.json"):
+    # Modo local
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+else:
+    # Modo nube
+    creds_dict = st.secrets["gcp_service_account"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(creds_dict), scope)
+
+# Conexión a Google Sheets
 client = gspread.authorize(creds)
 sheet = client.open("lista_cupcakes").sheet1
 
-# ========================
-# 3. Cargar datos
-# ========================
+# Cargar datos en DataFrame
 data = sheet.get_all_records()
 df = pd.DataFrame(data)
 
-# ========================
-# 4. Métricas por estado
-# ========================
-st.title("🍰 Seguimiento de Producción de Cupcakes")
+# Contadores por estado
+estado_counts = df["Estado (✅)"].value_counts().to_dict()
 
-estados = ["PENDIENTE", "EN EL HORNO", "OK", "DEFECTUOSO"]
-colores = {"PENDIENTE": "gray", "EN EL HORNO": "orange", "OK": "green", "DEFECTUOSO": "red"}
+# Mostrar métricas
+st.subheader("📊 Estado de Producción")
+cols = st.columns(len(estado_counts))
+for i, (estado, cantidad) in enumerate(estado_counts.items()):
+    cols[i].metric(estado, cantidad)
 
-cols = st.columns(len(estados))
-for i, estado in enumerate(estados):
-    cantidad = (df["Estado (✅)"] == estado).sum()
-    cols[i].metric(label=estado, value=int(cantidad))
-
-# ========================
-# 5. Gráfico de barras agrupado
-# ========================
-st.subheader("📈 Estado de Producción por Sabor")
-df_grouped = df.groupby(["Sabor", "Estado (✅)"]).size().reset_index(name="Cantidad")
-
-fig_bar = px.bar(
-    df_grouped,
+# Gráfico por sabor
+fig = px.bar(
+    df.groupby("Sabor")["N°"].count().reset_index(),
     x="Sabor",
-    y="Cantidad",
-    color="Estado (✅)",
-    barmode="group",
-    title="Producción por Sabor y Estado",
-    color_discrete_map=colores
+    y="N°",
+    color="Sabor",
+    title="Producción por Sabor"
 )
-st.plotly_chart(fig_bar, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True)
 
-# ========================
-# 6. Gráfico de pastel
-# ========================
-st.subheader("🥧 Distribución General de Estados")
-df_estado = df["Estado (✅)"].value_counts().reset_index()
-df_estado.columns = ["Estado", "Cantidad"]
+# Formulario para actualizar estado por rango
+st.subheader("✏️ Actualizar Estados por Rango")
+with st.form("update_form"):
+    desde = st.number_input("Desde (N°)", min_value=1, step=1)
+    hasta = st.number_input("Hasta (N°)", min_value=1, step=1)
+    nuevo_estado = st.selectbox("Nuevo Estado", ["EN EL HORNO", "PENDIENTE", "OK", "DEFECTUOSO"])
+    submit = st.form_submit_button("Actualizar")
 
-fig_pie = px.pie(
-    df_estado,
-    names="Estado",
-    values="Cantidad",
-    title="Distribución de Estados",
-    color="Estado",
-    color_discrete_map=colores
-)
-st.plotly_chart(fig_pie, use_container_width=True)
+    if submit:
+        for i in range(len(df)):
+            if desde <= df.loc[i, "N°"] <= hasta:
+                sheet.update_cell(i + 2, df.columns.get_loc("Estado (✅)") + 1, nuevo_estado)
+        st.success(f"Estados actualizados de {desde} a {hasta} → {nuevo_estado}")
 
-# ========================
-# 7. Formulario para cambiar estado (por sabor + rango)
-# ========================
-st.subheader("✏️ Actualizar Estado de Cupcakes por Sabor y Rango")
 
-sabores = ["Todos"] + sorted(df["Sabor"].unique())
-sabor_seleccionado = st.selectbox("Filtrar por sabor", sabores)
-
-min_id = int(df["N°"].min())
-max_id = int(df["N°"].max())
-
-desde = st.number_input("Cupcake N° desde", min_value=min_id, max_value=max_id, value=min_id)
-hasta = st.number_input("Cupcake N° hasta", min_value=min_id, max_value=max_id, value=max_id)
-nuevo_estado = st.selectbox("Nuevo Estado", estados)
-
-if st.button("Actualizar Estado en Rango"):
-    if desde > hasta:
-        st.error("❌ El número 'desde' no puede ser mayor que 'hasta'.")
-    else:
-        # Filtrar por rango
-        rango_df = df[(df["N°"] >= desde) & (df["N°"] <= hasta)]
-        
-        # Filtrar por sabor (si no es "Todos")
-        if sabor_seleccionado != "Todos":
-            rango_df = rango_df[rango_df["Sabor"] == sabor_seleccionado]
-        
-        if rango_df.empty:
-            st.warning("⚠️ No hay cupcakes que cumplan con esos filtros.")
-        else:
-            for _, row in rango_df.iterrows():
-                cell = sheet.find(str(row["N°"]))
-                if cell:
-                    sheet.update_cell(cell.row, 3, nuevo_estado)  # Columna 3 = Estado (✅)
-            st.success(f"✅ Se actualizaron {len(rango_df)} cupcakes al estado '{nuevo_estado}'")
