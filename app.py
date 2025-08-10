@@ -16,7 +16,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds_dict, scop
 client = gspread.authorize(creds)
 
 # Nombre de la hoja de Google Sheets
-SHEET_NAME = "Produccion"
+SHEET_NAME = "lista_cupcakes"
 sheet = client.open(lista_cupcakes).sheet1
 
 # --- FUNCIONES ---
@@ -76,6 +76,7 @@ st.divider()
 # --- VISTA TABLA ---
 st.subheader("📋 Datos de Producción")
 st.dataframe(df, use_container_width=True)
+
 
 
 
