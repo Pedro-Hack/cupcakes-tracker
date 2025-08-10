@@ -11,7 +11,7 @@ from datetime import datetime
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
-sheet = client.open("Cupcakes Produccion").sheet1
+sheet = client.open("lista_cupcakes").sheet1
 
 # ========================
 # FUNCIONES AUXILIARES
@@ -89,6 +89,7 @@ elif menu == "✏️ Actualizar Producción":
     if st.button("Actualizar Estado"):
         update_state_by_range(sabor_sel, desde, hasta, nuevo_estado)
         st.success(f"Estados actualizados para {sabor_sel} del N° {desde} al {hasta}")
+
 
 
 
