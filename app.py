@@ -3,23 +3,25 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import plotly.express as px
-from datetime import datetime
 
 # ========================
-# CONEXIÓN GOOGLE SHEETS
+# CARGAR CREDENCIALES DESDE SECRETS
 # ========================
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+
+# Cargar desde secrets
+creds_dict = st.secrets["gcp_service_account"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
-sheet = client.open("lista_cupcakes").sheet1
+
+sheet = client.open("Cupcakes Produccion").sheet1
 
 # ========================
 # FUNCIONES AUXILIARES
 # ========================
 def load_data():
     data = sheet.get_all_records()
-    df = pd.DataFrame(data)
-    return df
+    return pd.DataFrame(data)
 
 def save_row(row_data):
     sheet.append_row(row_data)
@@ -28,7 +30,7 @@ def update_state_by_range(sabor, desde, hasta, nuevo_estado):
     df = load_data()
     for index, row in df.iterrows():
         if row["Sabor"] == sabor and desde <= row["N°"] <= hasta:
-            cell = sheet.find(str(row["N°"]))  # buscar por N°
+            cell = sheet.find(str(row["N°"]))
             sheet.update_cell(cell.row, 3, nuevo_estado)  # Columna 3 = Estado (✅)
 
 # ========================
@@ -89,6 +91,7 @@ elif menu == "✏️ Actualizar Producción":
     if st.button("Actualizar Estado"):
         update_state_by_range(sabor_sel, desde, hasta, nuevo_estado)
         st.success(f"Estados actualizados para {sabor_sel} del N° {desde} al {hasta}")
+
 
 
 
