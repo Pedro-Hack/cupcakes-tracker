@@ -14,7 +14,7 @@ creds_dict = st.secrets["gcp_service_account"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-sheet = client.open("Cupcakes Produccion").sheet1
+sheet = client.open("lista_cupcakes").sheet1
 
 # ========================
 # FUNCIONES AUXILIARES
@@ -91,6 +91,7 @@ elif menu == "✏️ Actualizar Producción":
     if st.button("Actualizar Estado"):
         update_state_by_range(sabor_sel, desde, hasta, nuevo_estado)
         st.success(f"Estados actualizados para {sabor_sel} del N° {desde} al {hasta}")
+
 
 
 
